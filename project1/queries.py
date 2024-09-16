@@ -101,7 +101,7 @@ select name1, count(*) from uniquePairs group by name1 order by count desc, name
 
 ### 6. Write a query to find the percentage participation of American Airlines in each airport, relative to the other airlines.
 ### One instance of participation in an airport is defined as a flight (EX. AA150) having a source or dest of that airport.
-### If UA101 leaves OAK and arrives in DFW, that adds 1 to American's count for both OAK and DFW airports.
+### If AA101 leaves OAK and arrives in DFW, that adds 1 to American's count for both OAK and DFW airports.
 ### This means that if AA has 1 in DFW, UA has 1 in DFW, DL has 2 in DFW, and SW has 3 in DFW, the query returns:
 ###     airport 		                              | participation
 ###     General Edward Lawrence Logan International   | .14
@@ -111,7 +111,7 @@ select name1, count(*) from uniquePairs group by name1 order by count desc, name
 ###       - The participation percentage is rounded to 2 decimals, as shown above
 ###       - You do not need to confirm that the flights actually occur by referencing the flewon table. This query is only concerned with
 ###         flights that exist in the flights table.
-###       - You must not leave out airports that have no UA flights (participation of 0)
+###       - You must not leave out airports that have no AA flights (participation of 0)
 queries[6] = """
 
 with portFlightData as (select name, source, dest, flightid, airlineid from airports, flights where (source = airportid or dest = airportid) order by name),
@@ -156,7 +156,7 @@ select name, flightid, start, consecFlights.end from customers natural join (sel
 
 ### 9. A layover consists of set of two flights where the destination of the first flight is the same 
 ###    as the source of the second flight. Additionally, the arrival of the first flight must be before the
-###    departure of the first flight. 
+###    departure of the second flight. 
 ###    Write a query to find all pairs of flights belonging to the same airline that had a layover in IAD
 ###    between 1 and 4 hours in length (inclusive).
 ### Output columns: 1st flight id, 2nd flight id, source city, destination city, layover duration
