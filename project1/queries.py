@@ -102,7 +102,7 @@ select name1, count(*) from uniquePairs group by name1 order by count desc, name
 ### If AA101 leaves OAK and arrives in DFW, that adds 1 to American's count for both OAK and DFW airports.
 ### This means that if AA has 1 in DFW, UA has 1 in DFW, DL has 2 in DFW, and SW has 3 in DFW, the query returns:
 ###     airport 		                              | participation
-###     General Edward Lawrence Logan International   | .14
+###     Dallas Fort Worth International           |  .14
 ### Output: (airport_name, participation).
 ### Order: Participation in descending order, airport name
 ### Note: - The airport column must be the full name of the airport
