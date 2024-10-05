@@ -21,10 +21,8 @@ order by city;
 ### Order: by name
 ### Output columns: name
 queries[1] = """
-select distinct name 
-from customers natural join flewon 
-where extract(dow from flightdate) = 1 and name !~ '^.(a|e|i|o|u).*' and birthdate != (select min(birthdate) from customers)
-order by name;
+with names as (select name, birthdate from customers natural join flewon where extract(dow from flightdate) = 1 and name !~ '^.(a|e|i|o|u).*')
+select distinct name from names where birthdate != (select min(birthdate) from names) order by name;
 """
 
 ### 2. Write a query to find customers who are frequent fliers on Delta Airlines (DL) 
@@ -54,7 +52,7 @@ ranked as
 (select *, (select count(*) + 1 from counted where count >  c.count) as rank from counted c)
 
 
-select rank, name, frequentflieron, count from ranked natural join customers where rank <= 10;
+select rank, name, frequentflieron, count from ranked natural join customers where rank <= 10 order by rank, name;
 
 """
 
@@ -116,8 +114,8 @@ queries[6] = """
 
 with portFlightData as (select name, source, dest, flightid, airlineid from airports, flights where (source = airportid or dest = airportid) order by name),
 AAFlights as (select distinct  name, (select count (*) from portFlightData where airlineid like 'AA' and name = a.name group by a.name) as AACount from portFlightData a),
-ratios as (select name, ((aacount * 1.0)/(totalflights * 1.0)) as ratio from AAFlights natural join (select name, count(*) as totalFlights from portFlightData group by name) as totals),
-concatenated as ((select name, 0.0 as ratio from ratios where ratio = 1 is unknown) union (select name, ratio from ratios where ratio = 1 is not unknown) order by desc)
+ratios as (select name, (select round(((aacount * 1.0)/(totalflights * 1.0)), 2)) as ratio from AAFlights natural join (select name, count(*) as totalFlights from portFlightData group by name) as totals)
+(select name, 0.00 as ratio from ratios where ratio = 1 is unknown) union (select name, ratio from ratios where ratio = 1 is not unknown) order by ratio desc, name;
 """
 # Convert unknowns to 0s
 # round
@@ -184,7 +182,7 @@ queries[10] = """
 with hubCount as (select name, count(*) as hubFlights from airlines natural join flights where (source like hub) or (dest like hub) group by name),
 totals as (select name, count(*) as totalFlights from airlines natural join flights group by name),
 ratio as (select name, (hubFlights * 1.0)/(totalFlights * 1.0) as percentage from hubCount natural join totals)
-select (select count(*) + 1 from ratio where percentage >  r.percentage) as rank, name from ratio r order by rank;
+select name, (select count(*) + 1 from ratio where percentage >  r.percentage) as rank from ratio r order by rank;
 
 """
 
@@ -202,4 +200,5 @@ select (select count(*) + 1 from ratio where percentage >  r.percentage) as rank
 ### Output: customer_name, flightid, start_date, end_date
 ### Order: by customer_name, flightid, start_date
 queries[11] = """
+select 0;
 """
