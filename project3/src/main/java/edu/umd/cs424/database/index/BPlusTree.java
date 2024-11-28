@@ -18,6 +18,8 @@ import edu.umd.cs424.database.io.Page;
 import edu.umd.cs424.database.io.PageAllocator;
 import edu.umd.cs424.database.table.RecordId;
 
+import javax.xml.crypto.Data;
+
 /**
  * A persistent B+ tree.
  *
@@ -161,7 +163,17 @@ public class BPlusTree implements Closeable {
 	 * tree.get(new IntDataBox(100)); // Optional.empty()
 	 */
 	public Optional<RecordId> get(BaseTransaction transaction, DataBox key) {
-		throw new UnsupportedOperationException("Implement this.");
+
+		//Get desired result
+		LeafNode target = root.get(transaction, key);
+		if ((target.getKeys()).contains(key)){
+
+			int i = (target.getKeys()).indexOf(key);
+			return Optional.of(target.getRids().get(i));
+
+		}else{
+			return Optional.empty();
+		}
 	}
 
 	/**
@@ -264,7 +276,33 @@ public class BPlusTree implements Closeable {
 	 * tree.put(key, rid); // BPlusTreeException :(
 	 */
 	public void put(BaseTransaction transaction, DataBox key, RecordId rid) throws BPlusTreeException {
-		throw new UnsupportedOperationException("Implement this.");
+
+		//duplicate detection
+		if(this.get(transaction, key).isPresent()){
+			throw new BPlusTreeException("Duplicate key insertion");
+		}
+
+		Optional<Pair<DataBox, Integer>> rootSplit = root.put(transaction, key, rid);
+
+		//On split, need to write new root
+		if(rootSplit.isPresent()){
+
+			// Key construction
+			List newKeys = new ArrayList<DataBox>();
+			newKeys.add((rootSplit.get()).getFirst());
+
+			// children construction
+			List newKids = new ArrayList<Integer>();
+			newKids.add((root.getPage()).getPageNum());
+			newKids.add(((rootSplit.get()).getSecond()));
+
+			// Node construction
+			root = new InnerNode(metadata, newKeys, newKids, transaction);
+
+		}
+
+		root.sync(transaction);
+
 	}
 
 	/**
@@ -284,7 +322,39 @@ public class BPlusTree implements Closeable {
 	 */
 	public void bulkLoad(BaseTransaction transaction, Iterator<Pair<DataBox, RecordId>> data, float fillFactor)
 			throws BPlusTreeException {
-		throw new UnsupportedOperationException("Implement this.");
+
+		// Test for empty
+		if (root instanceof LeafNode && ((LeafNode) root).getKeys().size() != 0){
+			throw new BPlusTreeException("Tree Not Empty");
+		}
+
+		// Loop through data to load
+		while(data.hasNext()){
+
+			//recursive bulkLoad
+			Optional<Pair<DataBox, Integer>> rootSplit = root.bulkLoad(transaction, data, fillFactor);
+
+			// Check for split
+			if (rootSplit.isPresent()){
+
+				// Key construction
+				List newKeys = new ArrayList<DataBox>();
+				newKeys.add((rootSplit.get()).getFirst());
+
+				// children construction
+				List newKids = new ArrayList<Integer>();
+				newKids.add((root.getPage()).getPageNum());
+				newKids.add(((rootSplit.get()).getSecond()));
+
+				// Node construction
+				root = new InnerNode(metadata, newKeys, newKids, transaction);
+
+			}
+
+			root.sync(transaction);
+
+		}
+
 	}
 
 	/**
@@ -300,7 +370,7 @@ public class BPlusTree implements Closeable {
 	 * tree.get(key); // Optional.empty()
 	 */
 	public void remove(BaseTransaction transaction, DataBox key) {
-		throw new UnsupportedOperationException("Implement this.");
+		root.remove(transaction, key);
 	}
 
 	// Helpers /////////////////////////////////////////////////////////////////
@@ -400,6 +470,16 @@ public class BPlusTree implements Closeable {
 		// you are welcome to add/change/remove instance variables in this class as you see fit
 		private LeafNode curNode;
 		private Iterator<RecordId> curIterator;
+		private DataBox lowerBound;
+		private DataBox upperBound;
+		private Integer LIMIT;
+		private Function<DataBox, Boolean> filter;
+		private int counter;
+		private int currInd;
+		private RecordId curRec;
+		boolean empty = false;
+
+
 
 		/**
 		 * This constructor simply creates an iterator that
@@ -413,8 +493,7 @@ public class BPlusTree implements Closeable {
 		 * @param transaction Ignore this parameter. It has nothing to do with project 3.
 		 */
 		public BPlusTreeIterator(BaseTransaction transaction) {
-			this.curNode = root.getLeftmostLeaf(transaction);
-			this.curIterator = curNode.scanAll();
+			this(transaction, null, null, Integer.MAX_VALUE, x -> true);
 		}
 
 		/**
@@ -435,7 +514,7 @@ public class BPlusTree implements Closeable {
 		 */
 		public BPlusTreeIterator(BaseTransaction transaction,
 								 DataBox lowerBound, DataBox upperBound) {
-			throw new UnsupportedOperationException("Implement this.");
+			this(transaction, upperBound, lowerBound, Integer.MAX_VALUE, x -> true);
 		}
 
 		/**
@@ -460,7 +539,47 @@ public class BPlusTree implements Closeable {
 		public BPlusTreeIterator(BaseTransaction transaction,
 								 DataBox lowerBound, DataBox upperBound, int limit,
 								 Function<DataBox, Boolean> filter) {
-			throw new UnsupportedOperationException("Implement this.");
+			this.lowerBound = lowerBound;
+			this.upperBound = upperBound;
+			this.LIMIT = limit;
+			this.filter = filter;
+			counter = 0;
+			currInd = 0;
+
+			// bound processing
+			if (lowerBound != null && upperBound != null){
+
+				// start from key with lower bound value
+				//this.curNode = root.get(transaction, lowerBound);
+				//this.curIterator = curNode.scanAll();
+
+				// Locate first index to iterate off of
+				//while (currInd < (curNode.getKeys()).size() && (curNode.getKeys()).get(currInd).compareTo(lowerBound) > 0){
+				//	currInd++;
+				//	curRec = curIterator.next();
+				//}
+				this.curNode = root.get(transaction, lowerBound);
+				this.curIterator = curNode.scanAll();
+				currInd = (curNode.getKeys()).indexOf(lowerBound);
+
+				if(currInd == -1){
+					empty = true;
+				} else {
+
+					for(int i = 0; i < currInd; i++){
+						curIterator.next();
+					}
+					curRec = (curNode.getRids()).get(currInd);
+				}
+
+			}else{
+				// No bounds
+
+				this.curNode = root.getLeftmostLeaf(transaction);
+				this.curIterator = curNode.scanAll();
+
+			}
+
 		}
 
 		/**
@@ -468,20 +587,146 @@ public class BPlusTree implements Closeable {
 		 *
 		 * @return True if calling hasNext will yield the next element. False if there are no more elements available.
 		 */
+
+		//for every leaf node - check if current leaf is null
+			//for every key
+				//do something
+			//current node = current node right sibling
+			//curNode = curNode right sibling - read from page number
+
 		@Override
 		public boolean hasNext() {
-			if (curIterator.hasNext()) {
-				return true;
-			} else {
-				// Because there might be empty leaves we need to loop through until we find a
-				// non-empty one
-				while (curNode.getRightSibling(null).isPresent() && !curIterator.hasNext()) {
-					curNode = curNode.getRightSibling(null).get();
-					curIterator = curNode.scanAll();
+			// Check if the limit has been hit
+			// check if the next key is under upper bound
+			// if so, check if the key passes the filter
+			// if not, check the next keys until one of them passes the filter
+			// When peeking into next, check if you break node index. If so, move to the next node and repeat.
+
+			if (counter < LIMIT && !empty) {
+				// Can still read more entries
+
+				while (curNode != null){
+					//while this is still a valid leaf node
+
+					while(curIterator.hasNext()){
+						//while this node still has keys
+
+						DataBox key = (curNode.getKeys()).get(currInd);
+
+						//upper bound check
+						if ( upperBound != null && (!(key.compareTo(upperBound) <= 0) || !(key.compareTo(lowerBound) >= 0))){
+							//System.out.println(lowerBound.getInt() + " " + key.getInt() + " " + upperBound.getInt() + " " + curNode.getRids().get(currInd) + " out of bounds");
+							return false;
+						}
+
+						// check filter
+						if (filter.apply(key)){
+							if ( upperBound != null){
+								//System.out.println(lowerBound.getInt() + " " + key.getInt() + " " + upperBound.getInt() + " " + curNode.getRids().get(currInd));
+							}
+							return true;
+						}//else{
+							//System.out.println(lowerBound.getInt() + " " + key.getInt() + " " + upperBound.getInt() + " " + curNode.getRids().get(currInd) + " failed key check");
+						//}
+
+						//move to next key and record
+						curRec = curIterator.next();
+						currInd++;
+
+					}
+
+					//reached end of leaf or leaves
+					// Because there might be empty leaves we need to loop through until we find a
+					// non-empty one
+					while (curNode.getRightSibling(null).isPresent() && !curIterator.hasNext()) {
+						curNode = curNode.getRightSibling(null).get();
+
+						//Reset key and record index on new leaf
+						currInd = 0;
+						curIterator = curNode.scanAll();
+					}
+
+					if(!curIterator.hasNext()){
+						return false;
+					}
+
+
 				}
-				// Either we found a non-empty one or we're at the end
-				return curIterator.hasNext();
+
+				return false;
+
+				/**
+				if (!curIterator.hasNext()) {
+					// Because there might be empty leaves we need to loop through until we find a
+					// non-empty one
+					while (curNode.getRightSibling(null).isPresent() && !curIterator.hasNext()) {
+						curNode = curNode.getRightSibling(null).get();
+
+						//Reset key and record index on new leaf
+						currInd = 0;
+						curIterator = curNode.scanAll();
+					}
+
+				}
+
+				if (curIterator.hasNext()){
+					boolean EOR = false;
+
+					while (!EOR){
+
+						DataBox key = (curNode.getKeys()).get(currInd);
+
+						//upper bound check
+						if ( upperBound != null && !(key.compareTo(upperBound) <= 0)){
+
+							return false;
+						}
+
+						// check filter
+						if (filter.apply(key)){
+							return true;
+						}else{
+
+							// move on to the next entry to check validity
+							if (curIterator.hasNext()){
+								//next record id and key
+								curRec = curIterator.next();
+								currInd++;
+
+							}else{
+
+								//check fr
+								while (curNode.getRightSibling(null).isPresent() && !curIterator.hasNext()) {
+									curNode = curNode.getRightSibling(null).get();
+									//Reset key and record index on new leaf
+									currInd = 0;
+									curIterator = curNode.scanAll();
+								}
+
+								if(!curIterator.hasNext()){
+									EOR = true;
+								}
+
+							}
+
+						}
+
+					}
+					return false;
+
+				}else{
+
+					//reached end of records
+					return false;
+
+				}
+			**/
+			}else {
+				// limit has been hit
+				return false;
+
 			}
+
 		}
 
 		/**
@@ -495,7 +740,22 @@ public class BPlusTree implements Closeable {
 		 */
 		@Override
 		public RecordId next() {
-			return curIterator.next();
+
+			//reads current entry and tests validity- else moves along all entries until valid one is reached.
+			if (this.hasNext()) {
+
+				//moves to next key index
+				currInd ++;
+				//counts up one read record
+				counter++;
+				//reads current record and moves up to next record index
+				curRec = curIterator.next();
+				return curRec;
+			}else{
+
+				throw new NoSuchElementException("No valid next element");
+
+			}
 		}
 	}
 }

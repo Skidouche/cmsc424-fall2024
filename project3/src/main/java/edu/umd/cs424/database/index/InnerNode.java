@@ -68,33 +68,192 @@ class InnerNode extends BPlusNode {
     // See BPlusNode.get.
     @Override
     public LeafNode get(BaseTransaction transaction, DataBox key) {
-        throw new UnsupportedOperationException("Implement this.");
+        /**
+         * node.get(k) returns the leaf node on which k may reside when queried from this node.
+         * For example, consider the following B+ tree (for brevity, only keys are
+         * shown; record ids are ommitted).
+         *
+         *                               inner
+         *                               +----+----+----+----+
+         *                               | 10 | 20 |    |    |
+         *                               +----+----+----+----+
+         *                              /     |     \
+         *                         ____/      |      \____
+         *                        /           |           \
+         *   +----+----+----+----+  +----+----+----+----+  +----+----+----+----+
+         *   |  1 |  2 |  3 |    |->| 11 | 12 | 13 |    |->| 21 | 22 | 23 |    |
+         *   +----+----+----+----+  +----+----+----+----+  +----+----+----+----+
+         *   leaf0                  leaf1                  leaf2
+         *
+         * inner.get(x) should return
+         *
+         *   - leaf0 when x < 10,
+         *   - leaf1 when 10 <= x < 20, and
+         *   - leaf2 when x >= 20.
+         *
+         * Note that inner.get(4) would return leaf0 even though leaf0 doesn't
+         * actually contain 4.
+         */
+        int i = 0;
+
+        while (i < keys.size() && key.getInt() >= keys.get(i).getInt()) {
+            i++;
+        }
+        return (this.getChild(transaction, i)).get(transaction, key);
     }
 
     // See BPlusNode.getLeftmostLeaf.
     @Override
     public LeafNode getLeftmostLeaf(BaseTransaction transaction) {
-        throw new UnsupportedOperationException("Implement this.");
+        /**
+         * node.getLeftmostLeaf() returns the leftmost leaf in the subtree rooted by this node.
+         * In the example above, inner.getLeftmostLeaf() would return leaf0, and
+         * leaf1.getLeftmostLeaf() would return leaf1.
+         */
+        return this.getChild(transaction, 0).getLeftmostLeaf(transaction);
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Integer>> put(BaseTransaction transaction, DataBox key, RecordId rid)
     throws BPlusTreeException {
-        throw new UnsupportedOperationException("Implement this.");
+        /** Detect if key alr exists- if so, raise BPlusTreeException
+         * Else find where the key to insert is to be shoved in and check the leaf size
+         * If leaf can fit it, place it in at the right spot and return Optional.empty()
+         * If the leaf can't fit it, split the leaf accordingly and return the first right entry as new kid key
+         * Inner inserts new kid key and pointer into its data
+         * If inner needs to be split, split into 2 inner nodes on d keys either side and use mid as split key
+        */
+        int i = 0;
+
+        if (key.getInt() >= keys.get(keys.size() - 1).getInt()){
+            i = keys.size();
+        } else {
+            while (i < keys.size() && key.getInt() >= keys.get(i).getInt()) {
+                i++;
+            }
+
+        }
+
+        Optional<Pair<DataBox, Integer>> splitPair = this.getChild(transaction, i).put(transaction, key, rid);
+
+        if (splitPair.isPresent()) {
+            // if leaf split, insert new key
+
+            //Locate and insert new key
+            i = 0;
+
+            if (key.getInt() >= keys.get(keys.size() - 1).getInt()){
+                i = keys.size();
+            } else {
+                while (i < keys.size() && key.getInt() >= keys.get(i).getInt()) {
+                    i++;
+                }
+
+            }
+            keys.add(i, (splitPair.get()).getFirst());
+            children.add(i + 1, (splitPair.get()).getSecond());
+            sync(transaction);
+
+
+            // check overflow
+            if (keys.size() > (metadata.getOrder() * 2)){
+                //if overflow
+
+                //update lists, create new ones
+                DataBox innerSplitter = keys.get(metadata.getOrder());
+                //List rightKeys = keys.subList(metadata.getOrder() + 1, keys.size());
+                //List rightChildren = children.subList(metadata.getOrder() + 1, keys.size());
+                //keys = keys.subList(0, metadata.getOrder());
+                //children = children.subList(0, metadata.getOrder() + 1);
+                List<DataBox> rightKeys = new ArrayList<>(keys.subList(metadata.getOrder()+1, keys.size())); //the keys to go into the new right node
+                List<Integer> rightChildren = new ArrayList<>(children.subList(metadata.getOrder()+1, children.size())); // the rids to go into the new right node
+                this.keys.retainAll(new ArrayList<>(keys.subList(0, metadata.getOrder())));
+                this.children.retainAll(new ArrayList<>(children.subList(0, metadata.getOrder() + 1)));
+
+                InnerNode adjacent = new InnerNode(metadata, rightKeys, rightChildren, transaction);
+                sync(transaction);
+                return Optional.of(new Pair<DataBox, Integer>(innerSplitter, (adjacent.getPage()).getPageNum()));
+
+            }else{
+                //no overflow
+                return Optional.empty();
+            }
+
+        } else {
+            //if no leaf split, return empty
+
+            return Optional.empty();
+
+        }
+
     }
 
     // See BPlusNode.bulkLoad.
     @Override
     public Optional<Pair<DataBox, Integer>> bulkLoad(BaseTransaction transaction, Iterator<Pair<DataBox, RecordId>> data, float fillFactor)
     throws BPlusTreeException {
-        throw new UnsupportedOperationException("Implement this.");
+        // bulkload data into rightmost node
+        // on split, update inner node
+        // detect inner node split and update accordingly
+
+        // loop through all date and push into rightmost nodes
+        while (data.hasNext()){
+
+            //locate right node and load
+            BPlusNode right = getChild(transaction, children.size() - 1);
+            Optional<Pair<DataBox, Integer>> loaded = right.bulkLoad(transaction, data, fillFactor);
+
+            //child split detection
+            if (loaded.isPresent()){
+                //split
+
+                //update current node
+                keys.add((loaded.get()).getFirst());
+                children.add((loaded.get()).getSecond());
+
+                //detect current node split
+                if (keys.size() > (metadata.getOrder() * 2)){
+                    //split detected
+
+                    // construct new node elements
+                    DataBox splitter = keys.get(metadata.getOrder());
+                    List rightKeys = keys.subList(metadata.getOrder() + 1, keys.size());
+                    List rightChild = children.subList(metadata.getOrder() + 1, children.size());
+
+                    //update host elements
+                    keys = keys.subList(0, metadata.getOrder());
+                    children = children.subList(0, metadata.getOrder() + 1);
+
+                    //final node update, sync, and return
+                    InnerNode split = new InnerNode(metadata, rightKeys, rightChild, transaction);
+                    sync(transaction);
+                    return Optional.of(new Pair<DataBox, Integer>(splitter, (split.getPage()).getPageNum()));
+
+                }
+
+            }
+
+        }
+
+        return  Optional.empty();
+
     }
 
     // See BPlusNode.remove.
     @Override
     public void remove(BaseTransaction transaction, DataBox key) {
-        throw new UnsupportedOperationException("Implement this.");
+
+        //locate index to zoom on
+        int i = 0;
+        while (i < keys.size() && (keys.get(i)).getInt() <= key.getInt()){
+            i++;
+        }
+
+        //remove recursively
+        (this.getChild(transaction, i)).remove(transaction, key);
+        sync(transaction);
+
     }
 
     // Helpers ///////////////////////////////////////////////////////////////////

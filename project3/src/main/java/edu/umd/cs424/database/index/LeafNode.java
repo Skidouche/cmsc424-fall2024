@@ -4,6 +4,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 
 import edu.umd.cs424.database.BaseTransaction;
+import edu.umd.cs424.database.common.Buffer;
 import edu.umd.cs424.database.common.Pair;
 import edu.umd.cs424.database.databox.DataBox;
 import edu.umd.cs424.database.databox.Type;
@@ -129,20 +130,150 @@ class LeafNode extends BPlusNode {
     // See BPlusNode.get.
     @Override
     public LeafNode get(BaseTransaction transaction, DataBox key) {
-        throw new UnsupportedOperationException("Implement this.");
+
+        return this;
+
     }
 
     // See BPlusNode.getLeftmostLeaf.
     @Override
     public LeafNode getLeftmostLeaf(BaseTransaction transaction) {
-        throw new UnsupportedOperationException("Implement this.");
+
+        return this;
+
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Integer>> put(BaseTransaction transaction, DataBox key, RecordId rid)
     throws BPlusTreeException {
-        throw new UnsupportedOperationException("Implement this.");
+        /**
+         * node.put(k, r) inserts the pair (k, r) into the subtree rooted by this node. There
+         * are two cases to consider:
+         *
+         *   Case 1: If inserting the pair (k, r) does NOT cause the node to overflow, then
+         *           Optional.empty() is returned.
+         *   Case 2: If inserting the pair (k, r) does cause the node to overflow,
+         *           then the node is split into a left and right node (described more
+         *           below) and a pair (split_key, right_node_page_num) is returned
+         *           where right_node_page_num is the page number of the newly
+         *           created right node, and the value of split_key depends on
+         *           whether the node is an inner node or a leaf node (described more below).
+         *
+         * Now we explain how to split nodes and which split keys to return. Let's
+         * take a look at an example. Consider inserting the key 4 into the example
+         * tree above. No nodes overflow (i.e. we always hit case 1). The tree then
+         * looks like this:
+         *
+         *                               inner
+         *                               +----+----+----+----+
+         *                               | 10 | 20 |    |    |
+         *                               +----+----+----+----+
+         *                              /     |     \
+         *                         ____/      |      \____
+         *                        /           |           \
+         *   +----+----+----+----+  +----+----+----+----+  +----+----+----+----+
+         *   |  1 |  2 |  3 |  4 |->| 11 | 12 | 13 |    |->| 21 | 22 | 23 |    |
+         *   +----+----+----+----+  +----+----+----+----+  +----+----+----+----+
+         *   leaf0                  leaf1                  leaf2
+         *
+         * Now let's insert key 5 into the tree. Now, leaf0 overflows and creates a
+         * new right sibling leaf3. d entries remain in the left node; d + 1 entries
+         * are moved to the right node. DO NOT REDISTRIBUTE ENTRIES ANY OTHER WAY. In
+         * our example, leaf0 and leaf3 would look like this:
+         *
+         *   +----+----+----+----+  +----+----+----+----+
+         *   |  1 |  2 |    |    |->|  3 |  4 |  5 |    |
+         *   +----+----+----+----+  +----+----+----+----+
+         *   leaf0                  leaf3
+         *
+         * When a leaf splits, it returns the first entry in the right node as the
+         * split key. In this example, 3 is the split key. After leaf0 splits, inner
+         * inserts the new key and child pointer into itself and hits case 0 (i.e. it
+         * does not overflow). The tree looks like this:
+         *
+         *                          inner
+         *                          +--+--+--+--+
+         *                          | 3|10|20|  |
+         *                          +--+--+--+--+
+         *                         /   |  |   \
+         *                 _______/    |  |    \_________
+         *                /            |   \             \
+         *   +--+--+--+--+  +--+--+--+--+  +--+--+--+--+  +--+--+--+--+
+         *   | 1| 2|  |  |->| 3| 4| 5| 6|->|11|12|13|  |->|21|22|23|  |
+         *   +--+--+--+--+  +--+--+--+--+  +--+--+--+--+  +--+--+--+--+
+         *   leaf0          leaf3          leaf1          leaf2
+         *
+         * When an inner node splits, the first d entries are kept in the left node
+         * and the last d entries are moved to the right node. The middle entry is
+         * moved (not copied) up as the split key. For example, we would split the
+         * following order 2 inner node
+         *
+         *   +---+---+---+---+
+         *   | 1 | 2 | 3 | 4 | 5
+         *   +---+---+---+---+
+         *
+         * into the following two inner nodes
+         *
+         *   +---+---+---+---+  +---+---+---+---+
+         *   | 1 | 2 |   |   |  | 4 | 5 |   |   |
+         *   +---+---+---+---+  +---+---+---+---+
+         *
+         * with a split key of 3.
+         *
+         * DO NOT redistribute entries in any other way besides what we have
+         * described. For example, do not move entries between nodes to avoid
+         * splitting.
+         *
+         * Our B+ trees do not support duplicate entries with the same key. If a
+         * duplicate key is inserted, the tree is left unchanged and an exception is
+         * raised.
+         */
+
+        // records index to insert into, push everything else to the right inclusive of current element at i
+        int i = 0;
+        while (i < keys.size() && key.getInt() > (keys.get(i)).getInt()){
+            i++;
+        }
+
+        //check for duplicate key
+        if (i < keys.size() && (keys.get(i)).getInt() == key.getInt()){
+            throw new BPlusTreeException("Tried to insert duplicate");
+        }else{
+            // no duplicates
+
+            //insert new key and rid
+            keys.add(i, key);
+            rids.add(i, rid);
+            sync(transaction);
+
+            // check if split is needed
+            if (keys.size() > (2 * metadata.getOrder())){
+                // split required
+
+                // Create new right node and split accordingly
+                DataBox splitKey = keys.get(metadata.getOrder());
+                List rightKeys = keys.subList(metadata.getOrder(), keys.size());
+                List rightRIDs = rids.subList(metadata.getOrder(), rids.size());
+                this.keys = keys.subList(0, metadata.getOrder());
+                this.rids = rids.subList(0, metadata.getOrder());
+
+                // Reassign relevant pointers
+
+                LeafNode newRight = new LeafNode(metadata, rightKeys, rightRIDs, this.rightSibling, transaction);
+                Integer rightPageNum = (newRight.getPage()).getPageNum();
+                this.rightSibling = Optional.of(rightPageNum);
+                sync(transaction);
+
+                return Optional.of(new Pair<>(splitKey, rightPageNum));
+                // return pair of split key and right node page number
+
+            }else{
+                // no split needed
+                return Optional.empty();
+            }
+
+        }
     }
 
     // See BPlusNode.bulkLoad.
@@ -151,13 +282,52 @@ class LeafNode extends BPlusNode {
             Iterator<Pair<DataBox, RecordId>> data,
             float fillFactor)
     throws BPlusTreeException {
-        throw new UnsupportedOperationException("Implement this.");
+
+        int fill = (int)(Math.ceil(2 * metadata.getOrder() * fillFactor));
+
+        //population
+        while (data.hasNext()){
+            Pair<DataBox, RecordId> insert = data.next();
+            keys.add(insert.getFirst());
+            rids.add(insert.getSecond());
+
+            if (keys.size() > fill){
+                //split condition
+
+                // New leaf component construction
+                List<DataBox> rightKeys = keys.subList(fill, keys.size());
+                List rightRID = rids.subList(fill, rids.size());
+                //redistribute prev keys and ids
+                keys = keys.subList(0, fill);
+                rids = rids.subList(0, fill);
+                // leaf construction and synch
+                LeafNode rightSib = new LeafNode(metadata, rightKeys, rightRID, this.rightSibling, transaction);
+                int rpn = (rightSib.getPage()).getPageNum();
+                this.rightSibling = Optional.of(rpn);
+                sync(transaction);
+
+                return Optional.of(new Pair<DataBox, Integer>(rightKeys.get(0), rpn));
+
+
+            }
+        }
+
+        sync(transaction);
+        return Optional.empty();
+
     }
 
     // See BPlusNode.remove.
     @Override
     public void remove(BaseTransaction transaction, DataBox key) {
-        throw new UnsupportedOperationException("Implement this.");
+
+        //locate existing key, remove it and corresponding rid
+        if (keys.contains(key)) {
+            int i = keys.indexOf(key);
+            keys.remove(key);
+            rids.remove(i);
+            sync(transaction);
+        }
     }
 
     // Iterators /////////////////////////////////////////////////////////////////
@@ -317,14 +487,98 @@ class LeafNode extends BPlusNode {
         }
         return buf.array();
     }
+    public static LeafNode fromBytes(BaseTransaction transaction, BPlusTreeMetadata metadata, int pageNum) {
+        // Fetch the page and its ByteBuffer
+        Page page = metadata.getAllocator().fetchPage(transaction, pageNum);
+        Buffer buf = page.getBuffer(transaction);
+        //read first byte, 1 = leaf, 0 = not leaf
+        assert(buf.get() == (byte) 1);
+        //read second byte
+        boolean hasRightSibling = buf.get() == (byte) 1;
+        //read next 4 bytes for the right sibling page number
+        int rSibPageNum = buf.getInt();
+        Optional<Integer> rightSibling = Optional.empty();
+        if(hasRightSibling) {
+            rightSibling = Optional.of(rSibPageNum);
+        }
+
+        //read next 4 bytes for number of keys
+        int numKeys = buf.getInt();
+        //read the keys based on number of keys
+        List<DataBox> keys = new ArrayList<>();
+        for (int i = 0; i < numKeys; ++i) {
+            keys.add(DataBox.fromBytes(buf, metadata.getKeySchema()));
+        }
+        //now read the number of records corresponding to the keys
+        List<RecordId> rids = new ArrayList<>();
+        for (int i = 0; i < numKeys; ++i) {
+            rids.add(RecordId.fromBytes(buf));
+        }
+        //create a new leafnode from the bytes
+        return new LeafNode(metadata, pageNum, keys, rids, rightSibling, transaction);
+    }
 
     /**
      * LeafNode.fromBytes(m, p) loads a LeafNode from page p of
      * meta.getAllocator().
      */
-    public static LeafNode fromBytes(BaseTransaction transaction, BPlusTreeMetadata metadata,
+    public static LeafNode ofromBytes(BaseTransaction transaction, BPlusTreeMetadata metadata,
                                      int pageNum) {
-        throw new UnsupportedOperationException("Implement this.");
+        // When we serialize a leaf node, we write:
+        //
+        //   a. the literal value 1 (1 byte) which indicates that this node is a
+        //      leaf node,
+        //   b. the value 1 or 0 (1 byte) which indicates whether this node has a right sibling
+        //   c. the page id (4 bytes) of our right sibling, this field is ignored if the
+        //      right sibling indicator is 0.
+        //   d. the number (4 bytes) of keys (K) this leaf node contains (key, rid) pairs this leaf node contains.
+        //   e. the K keys of this node
+        //   f. the K rids of this node
+        //
+        // For example, the following bytes:
+        //
+        //   +----+----+-------------+-------------+----+----+-------------------+-------------------+
+        //   | 01 | 01 | 00 00 00 04 | 00 00 00 02 | 05 | 07 | 00 00 00 03 00 01 | 00 00 00 04 00 06 |
+        //   +----+----+-------------+-------------+----+----+-------------------+-------------------+
+        //    \__/ \__/ \___________/ \___________/ \_______/ \_____________________________________/
+        //     a     b         c            d           e                        f
+        //
+        // represent a leaf node having a sibling on page 4, two keys [5, 7] and two corresponding records [(3, 1), (4, 6)]
+
+        //Write function to read leaf node from page
+
+        Page page = metadata.getAllocator().fetchPage(transaction, pageNum);
+        Buffer buf = page.getBuffer(transaction);
+
+        // Assert the node is a leaf
+        assert(buf.get() == (byte) 1);
+
+        // Has right sibling
+        int hasSib = buf.get();
+        int rpid = buf.getInt();
+        Optional<Integer> rsib = Optional.empty();
+        if(hasSib == (byte) 1 ) {
+            rsib = Optional.of(rpid);
+        }
+
+        int keyQuant = buf.getInt();
+        var keys = new ArrayList<DataBox>();
+        var rids = new ArrayList<RecordId>();
+
+        for (int i = 0 ; i < keyQuant ; i++){
+            keys.add(DataBox.fromBytes(buf, metadata.getKeySchema()));
+        }
+        for (int i = 0 ; i < keyQuant ; i++){
+            rids.add(RecordId.fromBytes(buf));
+        }
+
+        if (hasSib == (byte) 0) {
+            return new LeafNode(metadata, pageNum, keys, rids, Optional.of(0), transaction);
+        }
+        else{
+            return new LeafNode(metadata, pageNum, keys, rids, Optional.of(rpid), transaction);
+        }
+
     }
 
     // Builtins //////////////////////////////////////////////////////////////////
